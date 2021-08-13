@@ -6,6 +6,7 @@ A simple RTP-MIDI to ALSA gateway
 * mkdir build
 * cd build
 * cmake ..
+* make
 
 
 # how to run
