@@ -4,6 +4,7 @@
 #include <cstring>
 #include <getopt.h>
 #include <map>
+#include <mutex>
 #include <netdb.h>
 #include <poll.h>
 #include <stdint.h>
@@ -29,9 +30,11 @@ typedef struct {
 	uint16_t my_seq_nr;
 	uint32_t peer_SSRC, my_SSRC;
 	std::string peer_name;
+	struct sockaddr_in6 peer_addr;
 } peer_t;
 
 std::map<std::string, peer_t> peers;
+std::mutex peers_lock;
 
 char name[256] = "???";
 
@@ -40,7 +43,7 @@ AvahiEntryGroup *group = nullptr;
 snd_seq_t *open_client()
 {
 	snd_seq_t *handle = nullptr;
-	int err = snd_seq_open(&handle, "default", SND_SEQ_OPEN_OUTPUT, 0);
+	int err = snd_seq_open(&handle, "default", SND_SEQ_OPEN_DUPLEX, 0);
 	if (err < 0)
 		return nullptr;
 
@@ -49,9 +52,10 @@ snd_seq_t *open_client()
 	return handle;
 }
 
-int my_new_port(snd_seq_t *const handle)
+void my_new_port(snd_seq_t *const handle, int *const outport, int *const inport)
 {
-	return snd_seq_create_simple_port(handle, "out", SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ, SND_SEQ_PORT_TYPE_MIDI_GENERIC);
+	*outport = snd_seq_create_simple_port(handle, "out", SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ, SND_SEQ_PORT_TYPE_MIDI_GENERIC);
+	*inport = snd_seq_create_simple_port(handle, "in", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE, SND_SEQ_PORT_TYPE_MIDI_GENERIC);
 }
 
 void midisend(snd_seq_t *const seq, const int port, const uint8_t *data, const size_t n)
@@ -126,6 +130,8 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 {
 	uint64_t now = get_us();
 
+	peers_lock.lock();
+
 	std::string peer_addr = get_endpoint_name(caddr, caddr_len);
 
 	printf("peer: %s\n", peer_addr.c_str());
@@ -140,7 +146,7 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 			uint32_t version = ntohl(*(uint32_t *)&buffer[4]);
 			// Apple session setup
 			if (version != 2)
-				return;
+				goto exit;
 
 			// uint32_t token = ntohl(*(uint32_t *)&buffer[8]);
 
@@ -155,6 +161,8 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 
 			p.my_SSRC = rand() & 0xffffffff;  // FIXME
 			p.peer_SSRC = peer_SSRC;
+
+			memcpy(&p.peer_addr, caddr, sizeof p.peer_addr);
 
 			p.peer_name = std::string((const char *)&buffer[16]);
 
@@ -218,31 +226,31 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 
 		if (it == peers.end()) {
 			printf("Unknown session\n");
-			return;
+			goto exit;
 		}
 
 		bool padding = buffer[0] & 32;
 		if (padding) {
 			printf("Has padding\n");
-			return;
+			goto exit;
 		}
 
 		bool header_ext = buffer[0] & 16;
 		if (header_ext) {
 			printf("Has extended header\n");
-			return;
+			goto exit;
 		}
 
 		uint8_t payload = buffer[1] & 127;
 		if (payload != 0x61) {
 			printf("Not MIDI: %02x\n", payload);
-			return;
+			goto exit;
 		}
 
-		bool has_midi = buffer[1] & 1;
+		bool has_midi = buffer[1] & 128;
 		if (!has_midi) {
 			printf("Not MIDI\n");
-			return;
+			goto exit;
 		}
 
 		uint16_t peer_seq_nr = (buffer[2] << 8) | buffer[3];
@@ -250,7 +258,7 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 		uint32_t peer_SSRC = ntohl(*(uint32_t *)&buffer[8]);
 		if (peer_SSRC != it->second.peer_SSRC) {
 			printf("Unexpected peer %x (%x)\n", peer_SSRC, it->second.peer_SSRC);
-			return;
+			goto exit;
 		}
 
 		// MIDI command
@@ -298,6 +306,9 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 	else {
 		printf("\tnot Apple (%02x %02x), not RTP header (%d)\n", buffer[0], buffer[1], version);
 	}
+
+exit:
+	peers_lock.unlock();
 }
 
 void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED void * userdata)
@@ -320,6 +331,61 @@ void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED vo
 			return;
 		}
 	}
+}
+
+void transmit_rtp_midi(const int fd, const uint8_t *const data, const int len)
+{
+	peers_lock.lock();
+
+	for(auto p : peers) {
+		uint8_t packet[1500] { 0 };
+		// RTP header
+		packet[0] |= 128;  // version 2
+		packet[1] |= 128;  // MIDI data
+		packet[1] |= 0x61;  // MIDI data
+		*(uint16_t*)&packet[2] = htons(p.second.my_seq_nr);
+		p.second.my_seq_nr++;
+		*(uint32_t*)&packet[4] = htonl(get_us() / 10);
+		*(uint32_t*)&packet[8] = htonl(p.second.my_SSRC);
+
+		// MIDI command header
+		uint8_t *midi_command = &packet[12];
+		midi_command[0] |= len;  // 3 bytes in MIDI message
+		memcpy(&midi_command[1], data, len);
+
+		int total_len = 12 + 1 + len;
+
+		if (sendto(fd, packet, total_len, 0, (struct sockaddr *)&p.second.peer_addr, sizeof p.second.peer_addr) == -1)
+			perror("sendto");
+		else
+			printf("Sent %d bytes to %s\n", total_len, p.second.peer_name.c_str());
+	}
+
+	peers_lock.unlock();
+}
+
+void alsa_processor(snd_seq_t *const seq, const int inport, const int fd_midi)
+{
+	snd_seq_event_t *ev = nullptr;
+
+	while (snd_seq_event_input(seq, &ev) >= 0) {
+		printf("%lu event %d\n", get_us(), ev->type);
+
+		if (ev->type == SND_SEQ_EVENT_NOTEON || ev->type == SND_SEQ_EVENT_NOTEOFF) {
+			uint8_t ch = ev->data.note.channel, cmd = ev->type == SND_SEQ_EVENT_NOTEON ? 0x90 : 0x80, note = ev->data.note.note, velocity = ev->data.note.velocity;
+
+			uint8_t midi_message[] = { uint8_t(cmd | ch), note, velocity };
+
+			transmit_rtp_midi(fd_midi, midi_message, sizeof midi_message);
+		}
+		else if (ev->type == SND_SEQ_EVENT_SYSEX) {
+			uint8_t *sysex = (uint8_t *)ev + sizeof(snd_seq_event_t);
+
+			transmit_rtp_midi(fd_midi, sysex, ev->data.ext.len);
+		}
+	}
+
+	printf("alsa_processor thread stopped\n");
 }
 
 int main(int argc, char *argv[])
@@ -345,7 +411,8 @@ int main(int argc, char *argv[])
 	snprintf(name, sizeof name, "frtpm_%s", buffer);
 
   	snd_seq_t *seq = open_client();
-  	int port = my_new_port(seq);
+	int outport = -1, inport = -1;
+  	my_new_port(seq, &outport, &inport);
 
 	int fd_ctrl = create_udp_listen_socket(base_port);
 	int fd_midi = create_udp_listen_socket(base_port + 1);
@@ -359,9 +426,11 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	std::thread *t = new std::thread([simple_poll]() { avahi_simple_poll_loop(simple_poll); });
+	std::thread *t_avahi = new std::thread([simple_poll]() { avahi_simple_poll_loop(simple_poll); });
 
-	struct pollfd fds[] = { { fd_ctrl, POLLIN | POLLERR, 0 }, { fd_midi, POLLIN, 0 } };
+	std::thread *t_midi = new std::thread([seq, inport, fd_midi]() { alsa_processor(seq, inport, fd_midi); });
+
+	struct pollfd fds[] = { { fd_ctrl, POLLIN, 0 }, { fd_midi, POLLIN, 0 } };
 
 	for(;;) {
 		uint8_t buffer[16384]; // that's bigger than jumbo frames
@@ -369,29 +438,30 @@ int main(int argc, char *argv[])
 		struct sockaddr_in6 caddr { 0 };
 		socklen_t caddr_len = sizeof caddr;
 
-		poll(fds, 2, -1);
+		if (poll(fds, 2, -1) == -1) {
+			perror("poll");
+			break;
+		}
 
 		if (fds[0].revents & POLLIN) {
 			int n = recvfrom(fd_ctrl, (char *)buffer, sizeof buffer - 1, MSG_WAITALL, (struct sockaddr *)&caddr, &caddr_len);
 			buffer[sizeof buffer - 1] = 0x00;
 
-			process_command(fd_ctrl, fd_ctrl, seq, port, buffer, n, &caddr, caddr_len);
-		}
-		if (fds[0].revents & POLLERR) {
-			printf("POLLERR\n");
+			process_command(fd_ctrl, fd_ctrl, seq, outport, buffer, n, &caddr, caddr_len);
 		}
 
 		if (fds[1].revents == POLLIN) {
 			int n = recvfrom(fd_midi, (char *)buffer, sizeof buffer - 1, MSG_WAITALL, (struct sockaddr *)&caddr, &caddr_len);
 			buffer[sizeof buffer - 1] = 0x00;
 
-			process_command(fd_midi, fd_ctrl, seq, port, buffer, n, &caddr, caddr_len);
+			process_command(fd_midi, fd_ctrl, seq, outport, buffer, n, &caddr, caddr_len);
 		}
 	}
 
 	snd_seq_close(seq);
 
-	t->join();
+	t_midi->join();
+	t_avahi->join();
 
 	return 0;
 }
