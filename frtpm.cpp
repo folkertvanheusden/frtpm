@@ -13,6 +13,7 @@
 #include <thread>
 #include <time.h>
 #include <unistd.h>
+#include <vector>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -39,6 +40,16 @@ std::mutex peers_lock;
 char name[256] = "???";
 
 AvahiEntryGroup *group = nullptr;
+
+void gen_name() {
+	char buffer[128];
+	if (gethostname(buffer, sizeof buffer) == -1) {
+		perror("gethostname");
+		exit(1);
+	}
+
+	snprintf(name, sizeof name, "frtpm_%s", buffer);
+}
 
 snd_seq_t *open_client()
 {
@@ -371,7 +382,13 @@ void alsa_processor(snd_seq_t *const seq, const int inport, const int fd_midi)
 	while (snd_seq_event_input(seq, &ev) >= 0) {
 		printf("%lu event %d\n", get_us(), ev->type);
 
-		if (ev->type == SND_SEQ_EVENT_NOTEON || ev->type == SND_SEQ_EVENT_NOTEOFF) {
+		if (ev->type == SND_SEQ_EVENT_PORT_START) {
+			printf("Connecting to %d:%d\n", ev->data.addr.client, ev->data.addr.port);
+
+			if (snd_seq_connect_from(seq, inport, ev->data.addr.client, ev->data.addr.port) < 0)
+				printf("Failed to connect\n");
+		}
+		else if (ev->type == SND_SEQ_EVENT_NOTEON || ev->type == SND_SEQ_EVENT_NOTEOFF) {
 			uint8_t ch = ev->data.note.channel, cmd = ev->type == SND_SEQ_EVENT_NOTEON ? 0x90 : 0x80, note = ev->data.note.note, velocity = ev->data.note.velocity;
 
 			uint8_t midi_message[] = { uint8_t(cmd | ch), note, velocity };
@@ -388,31 +405,41 @@ void alsa_processor(snd_seq_t *const seq, const int inport, const int fd_midi)
 	printf("alsa_processor thread stopped\n");
 }
 
+void setup_autoconnect(snd_seq_t *const seq, const int port)
+{
+	int err = snd_seq_connect_from(seq, port, SND_SEQ_CLIENT_SYSTEM, SND_SEQ_PORT_SYSTEM_ANNOUNCE);
+	if (err < 0) {
+		printf("Cannot subscribe to announce port\n");
+		exit(1);
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	int base_port = 5004;
 	int c = 1;
+	bool autoconnect = false;
 
-	while((c = getopt(argc, argv, "b:h")) != -1) {
+	while((c = getopt(argc, argv, "ab:h")) != -1) {
 		if (c == 'b')
 			base_port = atoi(optarg);
+		else if (c == 'a')
+			autoconnect = true;
 		else if (c == 'h') {
 			printf("-b x  base port to listen on (default: %d)\n", base_port);
+			printf("-a    auto connect to newly plugged in devices\n");
 			return 1;
 		}
 	}
 
-	char buffer[128];
-	if (gethostname(buffer, sizeof buffer) == -1) {
-		perror("gethostname");
-		return 1;
-	}
-
-	snprintf(name, sizeof name, "frtpm_%s", buffer);
+	gen_name();
 
   	snd_seq_t *seq = open_client();
 	int outport = -1, inport = -1;
   	my_new_port(seq, &outport, &inport);
+
+	if (autoconnect)
+		setup_autoconnect(seq, inport);
 
 	int fd_ctrl = create_udp_listen_socket(base_port);
 	int fd_midi = create_udp_listen_socket(base_port + 1);
