@@ -352,7 +352,7 @@ void transmit_rtp_midi(const int fd, const uint8_t *const data, const int len)
 		uint8_t packet[1500] { 0 };
 		// RTP header
 		packet[0] |= 128;  // version 2
-		packet[1] |= 128;  // MIDI data
+		// don't do, breaks e.g. windows: packet[1] |= 128;  // MIDI data
 		packet[1] |= 0x61;  // MIDI data
 		*(uint16_t*)&packet[2] = htons(p.second.my_seq_nr);
 		p.second.my_seq_nr++;
