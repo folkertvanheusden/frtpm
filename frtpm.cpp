@@ -1,4 +1,6 @@
 // (c) 2021 by Folkert van Heusden <mail@vanheusden.com>
+// Release under BSD 3-Clause license
+
 #include <cstring>
 #include <getopt.h>
 #include <map>

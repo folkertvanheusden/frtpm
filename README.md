@@ -13,4 +13,4 @@ Just start it. It listens hardcoded on port 5004/5005 altough you can override 5
 
 
 (c) 2021 by Folkert van Heusden <mail@vanheusden.com>
-license: GPL-3.0
+license: BSD 3-Clause
