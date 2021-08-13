@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <time.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -32,7 +33,7 @@ typedef struct {
 
 std::map<std::string, peer_t> peers;
 
-constexpr char name[] = "frtpm";
+char name[256] = "???";
 
 AvahiEntryGroup *group = nullptr;
 
@@ -334,6 +335,14 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
+
+	char buffer[128];
+	if (gethostname(buffer, sizeof buffer) == -1) {
+		perror("gethostname");
+		return 1;
+	}
+
+	snprintf(name, sizeof name, "frtpm_%s", buffer);
 
   	snd_seq_t *seq = open_client();
   	int port = my_new_port(seq);
