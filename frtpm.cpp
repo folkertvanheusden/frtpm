@@ -1,16 +1,26 @@
 // (c) 2021 by Folkert van Heusden <mail@vanheusden.com>
 #include <cstring>
+#include <getopt.h>
 #include <map>
 #include <netdb.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string>
+#include <thread>
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
 #include <alsa/asoundlib.h>
+
+#include <avahi-client/client.h>
+#include <avahi-client/publish.h>
+#include <avahi-common/error.h>
+#include <avahi-common/alternative.h>
+#include <avahi-common/simple-watch.h>
+#include <avahi-common/malloc.h>
+#include <avahi-common/timeval.h>
 
 typedef struct {
 	uint16_t my_seq_nr;
@@ -22,12 +32,14 @@ std::map<std::string, peer_t> peers;
 
 constexpr char name[] = "frtpm";
 
+AvahiEntryGroup *group = nullptr;
+
 snd_seq_t *open_client()
 {
 	snd_seq_t *handle = nullptr;
 	int err = snd_seq_open(&handle, "default", SND_SEQ_OPEN_OUTPUT, 0);
 	if (err < 0)
-		return NULL;
+		return nullptr;
 
 	snd_seq_set_client_name(handle, name);
 
@@ -285,13 +297,58 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 	}
 }
 
+void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED void * userdata)
+{
+	if (state == AVAHI_CLIENT_S_RUNNING) {
+		if (!(group = avahi_entry_group_new(c, nullptr, nullptr))) {
+			fprintf(stderr, "avahi_entry_group_new() failed: %s\n", avahi_strerror(avahi_client_errno(c)));
+			return;
+		}
+
+		int ret = 0;
+
+		if ((ret = avahi_entry_group_add_service(group, AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC, AvahiPublishFlags(0), name, "_apple-midi._udp", nullptr, nullptr, *(int *)userdata, nullptr)) < 0) {
+			fprintf(stderr, "Failed to add service: %s\n", avahi_strerror(ret));
+			return;
+		}
+
+		if ((ret = avahi_entry_group_commit(group)) < 0) {
+			fprintf(stderr, "Failed to commit entry group: %s\n", avahi_strerror(ret));
+			return;
+		}
+	}
+}
+
 int main(int argc, char *argv[])
 {
+	int base_port = 5004;
+	int c = 1;
+
+	while((c = getopt(argc, argv, "b:h")) != -1) {
+		if (c == 'b')
+			base_port = atoi(optarg);
+		else if (c == 'h') {
+			printf("-b x  base port to listen on (default: %d)\n", base_port);
+			return 1;
+		}
+	}
+
   	snd_seq_t *seq = open_client();
   	int port = my_new_port(seq);
 
-	int fd_ctrl = create_udp_listen_socket(5004);
-	int fd_midi = create_udp_listen_socket(5005);
+	int fd_ctrl = create_udp_listen_socket(base_port);
+	int fd_midi = create_udp_listen_socket(base_port + 1);
+
+	AvahiSimplePoll *simple_poll = avahi_simple_poll_new();
+
+	int error = 0;
+	AvahiClient *client = avahi_client_new(avahi_simple_poll_get(simple_poll), AvahiClientFlags(0), client_callback, &base_port, &error);
+	if (!client) {
+		fprintf(stderr, "Failed to create AVAHI client: %s\n", avahi_strerror(error));
+		return 1;
+	}
+
+	std::thread *t = new std::thread([simple_poll]() { avahi_simple_poll_loop(simple_poll); });
 
 	struct pollfd fds[] = { { fd_ctrl, POLLIN | POLLERR, 0 }, { fd_midi, POLLIN, 0 } };
 
@@ -322,6 +379,8 @@ int main(int argc, char *argv[])
 	}
 
 	snd_seq_close(seq);
+
+	t->join();
 
 	return 0;
 }

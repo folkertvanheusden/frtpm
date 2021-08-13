@@ -12,12 +12,22 @@ add_executable(
 
 set(CMAKE_BUILD_TYPE Debug)
 
+set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads)
+target_link_libraries(frtpm Threads::Threads)
+
 include(FindPkgConfig)
 
 pkg_check_modules(ALSA REQUIRED alsa)
 target_link_libraries(frtpm ${ALSA_LIBRARIES})
 target_include_directories(frtpm PUBLIC ${ALSA_INCLUDE_DIRS})
 target_compile_options(frtpm PUBLIC ${ALSA_CFLAGS_OTHER})
+
+pkg_check_modules(AVAHI REQUIRED avahi-client)
+target_link_libraries(frtpm ${AVAHI_LIBRARIES})
+target_include_directories(frtpm PUBLIC ${AVAHI_INCLUDE_DIRS})
+target_compile_options(frtpm PUBLIC ${AVAHI_CFLAGS_OTHER})
 
 set_target_properties(frtpm PROPERTIES OUTPUT_NAME frtpm)
 
