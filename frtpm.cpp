@@ -380,7 +380,7 @@ void alsa_processor(snd_seq_t *const seq, const int inport, const int fd_midi)
 	snd_seq_event_t *ev = nullptr;
 
 	while (snd_seq_event_input(seq, &ev) >= 0) {
-		printf("%lu event %d\n", get_us(), ev->type);
+		printf("%lu event %d\n", time(nullptr), ev->type);
 
 		if (ev->type == SND_SEQ_EVENT_PORT_START) {
 			printf("Connecting to %d:%d\n", ev->data.addr.client, ev->data.addr.port);
