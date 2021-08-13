@@ -1,3 +1,4 @@
+// (c) 2021 by Folkert van Heusden <mail@vanheusden.com>
 #include <cstring>
 #include <map>
 #include <netdb.h>
