@@ -4,6 +4,7 @@ Run it somewhere and it can bidirectionally bridge MIDI from/to ALSA to/from RTP
 
 
 # how to build
+* install the libasound2-dev package
 * mkdir build
 * cd build
 * cmake ..
