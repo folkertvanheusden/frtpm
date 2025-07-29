@@ -141,11 +141,10 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 {
 	uint64_t now = get_us();
 
-	peers_lock.lock();
-
 	std::string peer_addr = get_endpoint_name(caddr, caddr_len);
-
 	printf("peer: %s\n", peer_addr.c_str());
+
+	std::unique_lock lck(peers_lock);
 
 	// HEADER
 	uint8_t version = buffer[0] >> 6;
@@ -157,7 +156,7 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 			uint32_t version = ntohl(*(uint32_t *)&buffer[4]);
 			// Apple session setup
 			if (version != 2)
-				goto exit;
+				return;
 
 			// uint32_t token = ntohl(*(uint32_t *)&buffer[8]);
 
@@ -237,31 +236,31 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 
 		if (it == peers.end()) {
 			printf("Unknown session\n");
-			goto exit;
+			return;
 		}
 
 		bool padding = buffer[0] & 32;
 		if (padding) {
 			printf("Has padding\n");
-			goto exit;
+			return;
 		}
 
 		bool header_ext = buffer[0] & 16;
 		if (header_ext) {
 			printf("Has extended header\n");
-			goto exit;
+			return;
 		}
 
 		uint8_t payload = buffer[1] & 127;
 		if (payload != 0x61) {
 			printf("Not MIDI: %02x\n", payload);
-			goto exit;
+			return;
 		}
 
 		bool has_midi = buffer[1] & 128;
 		if (!has_midi) {
 			printf("Not MIDI\n");
-			goto exit;
+			return;
 		}
 
 		uint16_t peer_seq_nr = (buffer[2] << 8) | buffer[3];
@@ -269,7 +268,7 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 		uint32_t peer_SSRC = ntohl(*(uint32_t *)&buffer[8]);
 		if (peer_SSRC != it->second.peer_SSRC) {
 			printf("Unexpected peer %x (%x)\n", peer_SSRC, it->second.peer_SSRC);
-			goto exit;
+			return;
 		}
 
 		// MIDI command
@@ -317,9 +316,6 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 	else {
 		printf("\tnot Apple (%02x %02x), not RTP header (%d)\n", buffer[0], buffer[1], version);
 	}
-
-exit:
-	peers_lock.unlock();
 }
 
 void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED void * userdata)

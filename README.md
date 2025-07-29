@@ -19,5 +19,5 @@ Just start it. It listens hardcoded on port 5004/5005 altough you can override 5
 * https://github.com/davidmoreno/rtpmidid more advanced version of the same thing
 
 
-(c) 2021 by Folkert van Heusden <mail@vanheusden.com>
+(c) 2021 by Folkert van Heusden <folkert@vanheusden.com>
 license: BSD 3-Clause
