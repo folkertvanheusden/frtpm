@@ -120,7 +120,7 @@ int create_udp_listen_socket(int port)
 
 	// Bind the socket with the server address
 	if (bind(fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
-		perror("bind failed");
+		perror("bind failed, use -b");
 		exit(EXIT_FAILURE);
 	}
 
