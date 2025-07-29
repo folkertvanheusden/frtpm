@@ -1,6 +1,7 @@
-// (c) 2021 by Folkert van Heusden <mail@vanheusden.com>
+// (c) 2021-2025 by Folkert van Heusden <mail@vanheusden.com>
 // Release under BSD 3-Clause license
 
+#include "config.h"
 #include <cstring>
 #include <getopt.h>
 #include <map>
@@ -19,6 +20,7 @@
 
 #include <alsa/asoundlib.h>
 
+#if HAVE_AVAHI == 1
 #include <avahi-client/client.h>
 #include <avahi-client/publish.h>
 #include <avahi-common/error.h>
@@ -26,6 +28,7 @@
 #include <avahi-common/simple-watch.h>
 #include <avahi-common/malloc.h>
 #include <avahi-common/timeval.h>
+#endif
 
 typedef struct {
 	uint16_t my_seq_nr;
@@ -318,6 +321,7 @@ void process_command(const int work_fd, const int ctrl_fd, snd_seq_t *const seq,
 	}
 }
 
+#if HAVE_AVAHI == 1
 void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED void * userdata)
 {
 	if (state == AVAHI_CLIENT_S_RUNNING) {
@@ -339,6 +343,7 @@ void client_callback(AvahiClient *c, AvahiClientState state, AVAHI_GCC_UNUSED vo
 		}
 	}
 }
+#endif
 
 void transmit_rtp_midi(const int fd, const uint8_t *const data, const int len)
 {
@@ -440,6 +445,7 @@ int main(int argc, char *argv[])
 	int fd_ctrl = create_udp_listen_socket(base_port);
 	int fd_midi = create_udp_listen_socket(base_port + 1);
 
+#if HAVE_AVAHI == 1
 	AvahiSimplePoll *simple_poll = avahi_simple_poll_new();
 
 	int error = 0;
@@ -450,6 +456,7 @@ int main(int argc, char *argv[])
 	}
 
 	std::thread *t_avahi = new std::thread([simple_poll]() { avahi_simple_poll_loop(simple_poll); });
+#endif
 
 	std::thread *t_midi = new std::thread([seq, inport, fd_midi]() { alsa_processor(seq, inport, fd_midi); });
 
@@ -484,7 +491,9 @@ int main(int argc, char *argv[])
 	snd_seq_close(seq);
 
 	t_midi->join();
+#if HAVE_AVAHI == 1
 	t_avahi->join();
+#endif
 
 	return 0;
 }

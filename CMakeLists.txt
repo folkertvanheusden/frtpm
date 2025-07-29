@@ -17,6 +17,9 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads)
 target_link_libraries(frtpm Threads::Threads)
 
+configure_file(config.h.in config.h)
+target_include_directories(frtpm PUBLIC "${PROJECT_BINARY_DIR}")
+
 include(FindPkgConfig)
 
 pkg_check_modules(ALSA REQUIRED alsa)

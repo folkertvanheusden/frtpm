@@ -1,0 +1,4 @@
+#pragma once
+
+#cmakedefine01 AVAHI_FOUND
+#define HAVE_AVAHI AVAHI_FOUND
