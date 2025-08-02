@@ -27,7 +27,7 @@ target_link_libraries(frtpm ${ALSA_LIBRARIES})
 target_include_directories(frtpm PUBLIC ${ALSA_INCLUDE_DIRS})
 target_compile_options(frtpm PUBLIC ${ALSA_CFLAGS_OTHER})
 
-pkg_check_modules(AVAHI REQUIRED avahi-client)
+pkg_check_modules(AVAHI OPTIONAL avahi-client)
 target_link_libraries(frtpm ${AVAHI_LIBRARIES})
 target_include_directories(frtpm PUBLIC ${AVAHI_INCLUDE_DIRS})
 target_compile_options(frtpm PUBLIC ${AVAHI_CFLAGS_OTHER})
