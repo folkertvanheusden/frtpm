@@ -42,7 +42,9 @@ std::mutex peers_lock;
 
 char name[256] = "???";
 
+#if HAVE_AVAHI == 1
 AvahiEntryGroup *group = nullptr;
+#endif
 
 void gen_name() {
 	char buffer[128];
